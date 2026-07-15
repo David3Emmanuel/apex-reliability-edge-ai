@@ -5,24 +5,19 @@ import {
   Cpu, 
   CheckCircle, 
   Wrench, 
-  Database, 
   Zap, 
   TrendingUp, 
-  Gauge, 
-  ShieldAlert, 
+  Info, 
+  Clock, 
   Power,
   RotateCw,
   Sliders,
-  ChevronRight,
-  TrendingDown,
-  Info,
-  Clock,
-  UserCheck
+  Thermometer,
+  ShieldAlert,
+  Shield
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
-  LineChart, 
-  Line, 
   AreaChart, 
   Area, 
   XAxis, 
@@ -33,233 +28,215 @@ import {
 } from 'recharts';
 
 export default function App() {
-  // Active mill selection
-  const [selectedMillId, setSelectedMillId] = useState(2); // Default to Cement Mill 1 (has the alert)
-  const [isAnomalySimulated, setIsAnomalySimulated] = useState(false);
-  const [isCopeDecoupled, setIsCopeDecoupled] = useState(false);
-  const [isEStopTriggered, setIsEStopTriggered] = useState(false);
+  // Navigation / Selected mill
+  const [selectedMillId, setSelectedMillId] = useState(2); // Defaults to Cement Mill 1 (traditional drive)
+  
+  // State variables for Edge simulation
+  const [simState, setSimState] = useState('NORMAL'); // NORMAL, FAULT, MITIGATED, ESTOP
   const [time, setTime] = useState(0);
+  
+  // Telemetry history for scrolling oscilloscopes
+  const [telemetryHistory, setTelemetryHistory] = useState([]);
+  
+  // Live current metrics
+  const [liveSensors, setLiveSensors] = useState({
+    vibration: 1.8,
+    acoustic: 35,
+    temp: 62,
+    ehi: 96
+  });
 
-  // Mill configurations and status
-  const initialMills = [
+  // Mill configurations and assets specs
+  const mills = [
     {
       id: 1,
       name: "Loesche Raw Mill 1 (LM 69.6)",
       location: "Ibese Plant - Line 1",
-      type: "Raw Material Grinding",
       power: "5.6 MW",
+      driveType: "Renk COPE Drive (8x Motors)",
       tableSpeed: "24.5 RPM",
       rollers: 6,
-      driveType: "Renk COPE Drive (8x Motors)",
-      baseEHI: 94,
-      vibration: 2.1, // mm/s
-      acoustic: 45, // dB
-      temp: 68, // C
-      status: "Operational"
+      supportsCope: true
     },
     {
       id: 2,
       name: "Loesche Cement Mill 1 (LM 63.3+3)",
       location: "Ibese Plant - Line 1",
-      type: "Clinker Grinding",
       power: "6.4 MW",
-      tableSpeed: "28.2 RPM",
-      rollers: 6, // 3 master, 3 support
       driveType: "Flender KMPS 530 Gearbox",
-      baseEHI: 64, // showing degradation
-      vibration: 6.8, // elevated mm/s
-      acoustic: 98, // high AE stress
-      temp: 84, // elevated temperature
-      status: "Alert"
+      tableSpeed: "28.2 RPM",
+      rollers: 6,
+      supportsCope: false
     },
     {
       id: 3,
       name: "Loesche Coal Mill 1 (LM 28.3 D)",
       location: "Ibese Plant - Line 2",
-      type: "Fuel Preparation",
       power: "1.2 MW",
+      driveType: "Flender KMP 250 Gearbox",
       tableSpeed: "35.1 RPM",
       rollers: 3,
-      driveType: "Flender KMP 250 Gearbox",
-      baseEHI: 97,
-      vibration: 1.4,
-      acoustic: 32,
-      temp: 58,
-      status: "Operational"
-    },
-    {
-      id: 4,
-      name: "Loesche Raw Mill 2 (LM 69.6)",
-      location: "Ibese Plant - Line 2",
-      type: "Raw Material Grinding",
-      power: "5.6 MW",
-      tableSpeed: "24.3 RPM",
-      rollers: 6,
-      driveType: "Renk COPE Drive (8x Motors)",
-      baseEHI: 89,
-      vibration: 2.8,
-      acoustic: 52,
-      temp: 72,
-      status: "Operational"
+      supportsCope: false
     }
   ];
 
-  const [mills, setMills] = useState(initialMills);
+  const activeMill = mills.find(m => m.id === selectedMillId) || mills[1];
 
-  // Time simulation loop for live telemetry charts
-  const [chartData, setChartData] = useState([]);
-  
+  // Initialize scrolling baseline history
   useEffect(() => {
-    // Generate initial history data
     const history = [];
-    for (let i = 29; i >= 0; i--) {
-      const day = 30 - i;
+    for (let i = 0; i < 20; i++) {
       history.push({
-        day: `Day ${day}`,
-        RM1_EHI: 95 - Math.sin(day/5)*1.5,
-        CM1_EHI: day > 15 ? 90 - (day-15)*1.8 : 92 - Math.cos(day/3)*1,
-        Coal1_EHI: 97 - Math.sin(day/10)*0.5,
-        RM2_EHI: 90 - (day/10)*0.8,
-        vibration: day > 15 ? 2.5 + (day-15)*0.28 : 2.2 + Math.sin(day)*0.1,
-        acoustic: day > 15 ? 40 + (day-15)*3.8 : 38 + Math.cos(day)*2
+        time: i,
+        vibration: 1.8,
+        acoustic: 35,
+        temp: 62,
+        ehi: 96
       });
     }
-    setChartData(history);
+    setTelemetryHistory(history);
   }, []);
 
-  // Live sensor data generation
-  const [liveSensors, setLiveSensors] = useState({
-    vibration: 0,
-    acoustic: 0,
-    temp: 0,
-    ehi: 100
-  });
-
+  // Live timer for data generation loop (updates every 500ms for smooth live wave feeling)
   useEffect(() => {
-    const timer = setInterval(() => {
+    const interval = setInterval(() => {
       setTime(prev => prev + 1);
-    }, 1000);
-    return () => clearInterval(timer);
+    }, 500);
+    return () => clearInterval(interval);
   }, []);
 
+  // Update telemetry history and live sensor values on every timer tick
   useEffect(() => {
-    // Update live sensor metrics based on selected mill and simulations
-    const activeMill = mills.find(m => m.id === selectedMillId);
-    if (!activeMill) return;
-
-    let ehi = activeMill.baseEHI;
-    let vib = activeMill.vibration;
-    let ae = activeMill.acoustic;
-    let tmp = activeMill.temp;
-
-    // Apply simulation overrides
-    if (isEStopTriggered) {
-      ehi = 0;
-      vib = 0.05 + Math.random() * 0.05;
-      ae = 5 + Math.random() * 2;
-      tmp = 35 + Math.random() * 1;
-    } else if (isAnomalySimulated) {
-      // Simulate extreme degradation
-      const cycle = Math.sin(time / 2);
-      ehi = Math.max(25, Math.round(activeMill.baseEHI - 25 - cycle * 5));
-      vib = Number((activeMill.vibration * 1.8 + cycle * 0.5).toFixed(2));
-      ae = Math.round(activeMill.acoustic * 1.5 + cycle * 10);
-      tmp = Math.round(activeMill.temp * 1.15 + cycle * 3);
-    } else if (isCopeDecoupled && activeMill.driveType.includes("COPE")) {
-      // Decoupling helps mitigate bearing fault in COPE drives
-      ehi = 82; // stabilizes
-      vib = 2.9;
-      ae = 58;
-      tmp = 71;
-    } else {
-      // Normal operating oscillations
-      const drift = Math.sin(time / 5) * 0.5;
-      ehi = Math.round(activeMill.baseEHI + drift);
-      vib = Number((activeMill.vibration + Math.sin(time) * 0.1).toFixed(2));
-      ae = Math.round(activeMill.acoustic + Math.cos(time / 2) * 2);
-      tmp = Math.round(activeMill.temp + Math.sin(time / 10) * 0.5);
+    let vib, ae, temp, ehi;
+    
+    // Add realistic fluctuations
+    const noise = (amplitude) => (Math.random() - 0.5) * amplitude;
+    
+    switch (simState) {
+      case 'NORMAL':
+        ehi = 96;
+        vib = 1.8 + noise(0.2);
+        ae = 35 + noise(4);
+        temp = 62 + Math.sin(time / 10) * 0.4;
+        break;
+        
+      case 'FAULT':
+        ehi = 64;
+        // CRITICAL TELEMETRY EVIDENCE:
+        // High-frequency acoustic emission has spiked due to micro-cracking,
+        // but low-frequency vibration is still healthy (under ISO limits).
+        vib = 2.1 + noise(0.2); 
+        ae = 98 + noise(8); 
+        temp = 64 + Math.sin(time / 10) * 0.4;
+        break;
+        
+      case 'MITIGATED':
+        // Active redundancy handles load distribution
+        if (activeMill.supportsCope) {
+          ehi = 82;
+          vib = 2.9 + noise(0.3);
+          ae = 55 + noise(6);
+          temp = 71 + Math.sin(time / 10) * 0.4;
+        } else {
+          // Standard drive cannot mitigate, falls back to normal or fault
+          ehi = 64;
+          vib = 2.1 + noise(0.2);
+          ae = 98 + noise(8);
+          temp = 64 + Math.sin(time / 10) * 0.4;
+        }
+        break;
+        
+      case 'ESTOP':
+        ehi = 12;
+        vib = 0.05 + noise(0.02);
+        ae = 8 + noise(2);
+        temp = Math.max(38, Math.round(liveSensors.temp - 1.2)); // Cooling down
+        break;
+        
+      default:
+        ehi = 96;
+        vib = 1.8;
+        ae = 35;
+        temp = 62;
     }
 
-    setLiveSensors({
-      vibration: vib,
-      acoustic: ae,
-      temp: tmp,
-      ehi: ehi
+    // Safeguard negative limits and format decimals
+    vib = Math.max(0.02, Number(vib.toFixed(2)));
+    ae = Math.max(0, Math.round(ae));
+    temp = Math.max(30, Math.round(temp));
+
+    setLiveSensors({ vibration: vib, acoustic: ae, temp, ehi });
+
+    // Append to rolling history
+    setTelemetryHistory(prev => {
+      if (prev.length === 0) return [];
+      const nextTime = prev[prev.length - 1].time + 1;
+      return [
+        ...prev.slice(1),
+        { time: nextTime, vibration: vib, acoustic: ae, temp, ehi }
+      ];
     });
+  }, [time, simState, selectedMillId]);
 
-    // Update mills array to reflect live state
-    setMills(prev => prev.map(m => {
-      if (m.id === selectedMillId) {
-        return {
-          ...m,
-          currentEHI: ehi,
-          status: isEStopTriggered ? "Emergency Stop" : (ehi < 50 ? "Shutdown Required" : (ehi < 75 ? "Alert" : "Operational"))
-        };
-      }
-      // For non-selected mills, assign a dummy EHI around their base
-      return {
-        ...m,
-        currentEHI: m.currentEHI || m.baseEHI
-      };
-    }));
-
-  }, [time, selectedMillId, isAnomalySimulated, isCopeDecoupled, isEStopTriggered]);
-
-  const activeMill = mills.find(m => m.id === selectedMillId);
-
-  // Health index indicator colors
-  const getEHIColor = (score) => {
-    if (score >= 85) return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
-    if (score >= 70) return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10';
-    if (score >= 50) return 'text-amber-400 border-amber-500/30 bg-amber-500/10';
-    return 'text-rose-500 border-rose-500/30 bg-rose-500/10';
+  // Reset simulation states upon selecting a different mill
+  const handleMillSelect = (id) => {
+    setSelectedMillId(id);
+    setSimState('NORMAL');
   };
 
-  const getEHIGradient = (score) => {
-    if (score >= 85) return 'from-emerald-500 to-teal-400';
-    if (score >= 70) return 'from-cyan-500 to-blue-500';
-    if (score >= 50) return 'from-amber-500 to-orange-400';
-    return 'from-rose-600 to-red-500';
+  // Diagnostic status color mapping
+  const getEHIColor = (score) => {
+    if (score >= 85) return 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10';
+    if (score >= 70) return 'text-cyan-400 border-cyan-500/20 bg-cyan-500/10';
+    if (score >= 50) return 'text-amber-400 border-amber-500/20 bg-amber-500/10';
+    return 'text-rose-400 border-rose-500/20 bg-rose-500/10';
+  };
+
+  const getDrivetrainStatus = () => {
+    if (simState === 'ESTOP') return { label: "HALTED", bg: "bg-rose-500/20 border-rose-500 text-rose-400" };
+    if (simState === 'FAULT') return { label: "ALERT - DEGRADED", bg: "bg-amber-500/20 border-amber-500 text-amber-400" };
+    if (simState === 'MITIGATED' && activeMill.supportsCope) return { label: "RUNNING - MITIGATED", bg: "bg-cyan-500/20 border-cyan-500 text-cyan-400" };
+    return { label: "ONLINE", bg: "bg-emerald-500/20 border-emerald-500 text-emerald-400" };
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased">
       
-      {/* Header */}
-      <header className="border-b border-slate-900 bg-slate-900/40 backdrop-blur-md sticky top-0 z-40 px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      {/* Premium Header */}
+      <header className="border-b border-slate-900 bg-slate-900/30 backdrop-blur-md sticky top-0 z-40 px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="bg-indigo-600 text-white font-bold text-xs px-2.5 py-1 rounded tracking-widest uppercase">Dangote Cement</span>
-            <span className="text-slate-500 text-xs font-mono">DCP-MEW-V1.0</span>
+            <span className="bg-indigo-600 text-white font-bold text-[10px] px-2.5 py-0.5 rounded tracking-widest uppercase">Dangote Cement</span>
+            <span className="text-slate-500 text-[10px] font-mono">IBESE LINE 1 · MILL MONITORING</span>
           </div>
           <h1 className="text-xl md:text-2xl font-bold bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent mt-1">
-            Edge AI Predictive Maintenance & Reliability Early-Warning
+            Edge AI Predictive Maintenance Console
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Real-time high-frequency acoustic and vibration processing on local FPGA nodes · Challenge Track 2
+            Local FPGA-accelerated stress wave co-processing for raw meal and clinker cement grinding mills.
           </p>
         </div>
 
-        {/* Global Statistics */}
-        <div className="flex flex-wrap gap-3 w-full md:w-auto">
-          <div className="bg-slate-900/60 border border-slate-800/80 px-3.5 py-1.5 rounded-lg flex items-center gap-3">
-            <Cpu className="text-indigo-400 w-5 h-5" />
+        {/* Global Stats */}
+        <div className="flex flex-wrap gap-3">
+          <div className="bg-slate-900/60 border border-slate-800 px-3 py-1.5 rounded-lg flex items-center gap-3">
+            <Cpu className="text-indigo-400 w-4 h-4" />
             <div>
-              <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">FPGA Edge Nodes</div>
-              <div className="text-xs font-bold text-slate-200">4 Active (Xilinx/Intel)</div>
+              <div className="text-[9px] text-slate-500 uppercase font-bold tracking-wider">Edge Processor</div>
+              <div className="text-xs font-bold text-slate-200">FPGA Real-Time Pipeline</div>
             </div>
           </div>
-          <div className="bg-slate-900/60 border border-slate-800/80 px-3.5 py-1.5 rounded-lg flex items-center gap-3">
-            <Database className="text-cyan-400 w-5 h-5" />
+          <div className="bg-slate-900/60 border border-slate-800 px-3 py-1.5 rounded-lg flex items-center gap-3">
+            <Clock className="text-cyan-400 w-4 h-4" />
             <div>
-              <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Protocol Interface</div>
-              <div className="text-xs font-bold text-slate-200">OPC UA · MQTT (OK)</div>
+              <div className="text-[9px] text-slate-500 uppercase font-bold tracking-wider">Inference Latency</div>
+              <div className="text-xs font-bold text-emerald-400">28 &mu;s (Deterministic)</div>
             </div>
           </div>
-          <div className="bg-slate-900/60 border border-slate-800/80 px-3.5 py-1.5 rounded-lg flex items-center gap-3">
-            <Zap className="text-emerald-400 w-5 h-5 animate-pulse" />
+          <div className="bg-slate-900/60 border border-slate-800 px-3 py-1.5 rounded-lg flex items-center gap-3">
+            <Zap className="text-amber-400 w-4 h-4 animate-pulse" />
             <div>
-              <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Estimated Downtime Avoided</div>
+              <div className="text-[9px] text-slate-500 uppercase font-bold tracking-wider">Financial Risk Avoided</div>
               <div className="text-xs font-bold text-emerald-400">$1,280,000 YTD</div>
             </div>
           </div>
@@ -269,485 +246,461 @@ export default function App() {
       {/* Main Grid */}
       <main className="flex-1 p-6 grid grid-cols-1 xl:grid-cols-4 gap-6">
         
-        {/* Left Side: Mill List Selection */}
-        <div className="xl:col-span-1 flex flex-col gap-4">
-          <div className="text-sm font-semibold text-slate-400 uppercase tracking-wider px-1">
-            Grinding Mills (Ibese & Obajana)
-          </div>
+        {/* Left Column: Asset Selection & Simulation Console */}
+        <div className="xl:col-span-1 flex flex-col gap-6">
+          
+          {/* Asset Selection */}
           <div className="flex flex-col gap-3">
-            {mills.map((mill) => {
-              const score = mill.currentEHI || mill.baseEHI;
-              const isSelected = mill.id === selectedMillId;
-              const healthColor = getEHIColor(score);
-              return (
-                <button
-                  key={mill.id}
-                  onClick={() => {
-                    setSelectedMillId(mill.id);
-                    setIsAnomalySimulated(false);
-                    setIsCopeDecoupled(false);
-                    setIsEStopTriggered(false);
-                  }}
-                  className={`w-full text-left p-4 rounded-xl border transition-all duration-300 ${
-                    isSelected 
-                      ? 'bg-slate-900 border-indigo-500/50 shadow-lg shadow-indigo-500/5' 
-                      : 'bg-slate-900/30 border-slate-800/60 hover:bg-slate-900/60 hover:border-slate-700/80'
-                  }`}
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <div className="font-semibold text-slate-200 text-sm leading-tight">{mill.name}</div>
-                      <div className="text-xs text-slate-500 mt-1">{mill.location}</div>
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">
+              Select Grinding Mill
+            </div>
+            
+            <div className="flex flex-col gap-2">
+              {mills.map((mill) => {
+                const isSelected = mill.id === selectedMillId;
+                const isCurrentAlert = mill.id === 2 && simState === 'FAULT';
+                return (
+                  <button
+                    key={mill.id}
+                    onClick={() => handleMillSelect(mill.id)}
+                    className={`w-full text-left p-3.5 rounded-xl border transition-all duration-300 ${
+                      isSelected 
+                        ? 'bg-slate-900/80 border-indigo-500/60 shadow-lg shadow-indigo-500/5' 
+                        : 'bg-slate-900/20 border-slate-800/40 hover:bg-slate-900/50 hover:border-slate-800'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="font-semibold text-slate-200 text-sm leading-snug">{mill.name}</div>
+                        <div className="text-[11px] text-slate-500 mt-1">{mill.location}</div>
+                      </div>
+                      {isCurrentAlert && (
+                        <span className="bg-rose-500/20 border border-rose-500/30 text-rose-400 text-[9px] font-bold px-2 py-0.5 rounded uppercase animate-pulse">
+                          Alert
+                        </span>
+                      )}
                     </div>
-                    <span className={`text-[10px] px-2 py-0.5 rounded font-medium border ${healthColor}`}>
-                      {mill.status}
-                    </span>
-                  </div>
-                  
-                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-800/40">
-                    <span className="text-xs text-slate-500 font-mono">{mill.type}</span>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-slate-400">EHI:</span>
-                      <span className={`text-sm font-bold ${getEHIColor(score).split(' ')[0]}`}>{score}</span>
+                    
+                    <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-slate-800/60 text-[11px]">
+                      <span className="text-slate-400 font-mono">{mill.driveType.split(' ')[0]} Drive</span>
+                      <span className="text-slate-500">{mill.power}</span>
                     </div>
-                  </div>
-                </button>
-              );
-            })}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Interactive Simulation Controls */}
-          <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 mt-auto">
-            <div className="flex items-center gap-2 mb-3 text-slate-300 font-semibold text-xs uppercase tracking-wider">
+          {/* Simulation Console - Clean, Intuitive for Judges */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 mt-auto">
+            <div className="flex items-center gap-2 mb-4 text-slate-300 font-bold text-xs uppercase tracking-wider">
               <Sliders className="w-4 h-4 text-indigo-400" />
-              <span>Edge Simulation Console</span>
+              <span>Simulation Injections</span>
             </div>
-            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-              Manually inject abnormal plant states to validate the FPGA edge response and real-time dashboard propagation.
-            </p>
             
+            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+              Inject different operational scenarios to verify the Edge AI diagnostic behavior and early warning capabilities.
+            </p>
+
             <div className="flex flex-col gap-2.5">
               <button
-                onClick={() => {
-                  setIsAnomalySimulated(!isAnomalySimulated);
-                  setIsCopeDecoupled(false);
-                  setIsEStopTriggered(false);
-                }}
-                className={`w-full py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
-                  isAnomalySimulated 
-                    ? 'bg-amber-600 text-white font-bold' 
-                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                onClick={() => setSimState('NORMAL')}
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-between border transition-all ${
+                  simState === 'NORMAL'
+                    ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-400 font-bold shadow-md shadow-emerald-500/5'
+                    : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:bg-slate-800/50'
                 }`}
               >
-                <span>Inject Anomaly (Spalling/Bearing Wear)</span>
-                <AlertTriangle className={`w-3.5 h-3.5 ${isAnomalySimulated ? 'animate-bounce' : 'text-slate-400'}`} />
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${simState === 'NORMAL' ? 'bg-emerald-400 animate-ping' : 'bg-emerald-500/60'}`}></span>
+                  <span>1. Normal Baseline</span>
+                </div>
+                <span className="text-[10px] text-slate-500">Healthy</span>
               </button>
-
-              {activeMill && activeMill.driveType.includes("COPE") && (
-                <button
-                  onClick={() => {
-                    setIsCopeDecoupled(!isCopeDecoupled);
-                    setIsAnomalySimulated(false);
-                    setIsEStopTriggered(false);
-                  }}
-                  className={`w-full py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
-                    isCopeDecoupled 
-                      ? 'bg-teal-600 text-white font-bold' 
-                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                  }`}
-                  disabled={isEStopTriggered}
-                >
-                  <span>Active Redundancy (Decouple 1x Motor)</span>
-                  <RotateCw className={`w-3.5 h-3.5 ${isCopeDecoupled ? 'animate-spin' : 'text-slate-400'}`} />
-                </button>
-              )}
 
               <button
-                onClick={() => {
-                  setIsEStopTriggered(!isEStopTriggered);
-                  setIsAnomalySimulated(false);
-                  setIsCopeDecoupled(false);
-                }}
-                className={`w-full py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
-                  isEStopTriggered 
-                    ? 'bg-rose-700 text-white font-bold' 
-                    : 'bg-rose-950/40 text-rose-300 border border-rose-900/60 hover:bg-rose-900/30'
+                onClick={() => setSimState('FAULT')}
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-between border transition-all ${
+                  simState === 'FAULT'
+                    ? 'bg-amber-950/60 border-amber-500/50 text-amber-400 font-bold shadow-md shadow-amber-500/5'
+                    : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:bg-slate-800/50'
                 }`}
               >
-                <span>Emergency E-Stop (GPIO High Trigger)</span>
-                <Power className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${simState === 'FAULT' ? 'bg-amber-400 animate-ping' : 'bg-amber-500/60'}`}></span>
+                  <span>2. Bearing Crack (Alert)</span>
+                </div>
+                <span className="text-[10px] text-slate-500">Early Warning</span>
               </button>
 
-              {(isAnomalySimulated || isCopeDecoupled || isEStopTriggered) && (
-                <button
-                  onClick={() => {
-                    setIsAnomalySimulated(false);
-                    setIsCopeDecoupled(false);
-                    setIsEStopTriggered(false);
-                  }}
-                  className="w-full mt-2 py-1.5 text-center text-xs font-medium text-slate-400 hover:text-white border border-dashed border-slate-700 hover:border-slate-500 rounded-lg transition-all"
-                >
-                  Reset to Healthy Baseline
-                </button>
-              )}
+              <button
+                onClick={() => setSimState('MITIGATED')}
+                disabled={!activeMill.supportsCope}
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-between border transition-all ${
+                  !activeMill.supportsCope 
+                    ? 'opacity-40 cursor-not-allowed border-slate-900 text-slate-600'
+                    : simState === 'MITIGATED'
+                      ? 'bg-cyan-950/60 border-cyan-500/50 text-cyan-400 font-bold shadow-md shadow-cyan-500/5'
+                      : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:bg-slate-800/50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${simState === 'MITIGATED' && activeMill.supportsCope ? 'bg-cyan-400 animate-ping' : 'bg-cyan-500/60'}`}></span>
+                  <span>3. Decouple Motor (COPE)</span>
+                </div>
+                <span className="text-[10px] text-slate-500">Redundancy</span>
+              </button>
+
+              <button
+                onClick={() => setSimState('ESTOP')}
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-between border transition-all ${
+                  simState === 'ESTOP'
+                    ? 'bg-rose-950/60 border-rose-500/50 text-rose-400 font-bold shadow-md shadow-rose-500/5'
+                    : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:bg-slate-800/50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${simState === 'ESTOP' ? 'bg-rose-400 animate-ping' : 'bg-rose-500/60'}`}></span>
+                  <span>4. Emergency E-Stop</span>
+                </div>
+                <span className="text-[10px] text-slate-500">GPIO Shutdown</span>
+              </button>
             </div>
+            
+            {!activeMill.supportsCope && (
+              <p className="text-[10px] text-slate-500 mt-3 text-center italic">
+                * Active motor-decoupling requires a Renk COPE drive (available on Raw Mill 1).
+              </p>
+            )}
           </div>
+
         </div>
 
-        {/* Center/Right Area: Detailed Telemetry and Escalation */}
-        <div className="xl:col-span-3 flex flex-col gap-6">
+        {/* Center Panels: Drivetrain Map & Telemetry Oscilloscopes */}
+        <div className="xl:col-span-2 flex flex-col gap-6">
           
-          {/* Active Mill Details and Health Index Gauge */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            {/* Health Circular Gauge */}
-            <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none"></div>
-              
-              <div className="text-xs text-slate-500 uppercase tracking-widest font-semibold mb-4">Equipment Health Index</div>
-              
-              {/* Custom SVG Circular Gauge */}
-              <div className="relative w-36 h-36 flex items-center justify-center">
-                <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                  {/* Track circle */}
-                  <circle 
-                    cx="50" cy="50" r="42" 
-                    className="stroke-slate-800" 
-                    strokeWidth="8" fill="transparent" 
-                  />
-                  {/* Indicator Circle */}
-                  <circle 
-                    cx="50" cy="50" r="42" 
-                    stroke={`url(#gauge-gradient-${selectedMillId})`}
-                    strokeWidth="8" fill="transparent" 
-                    strokeDasharray={263.8}
-                    strokeDashoffset={263.8 - (263.8 * Math.min(100, liveSensors.ehi)) / 100}
-                    strokeLinecap="round"
-                    className="transition-all duration-700 ease-out"
-                  />
-                  <defs>
-                    <linearGradient id={`gauge-gradient-${selectedMillId}`} x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor={liveSensors.ehi >= 85 ? "#10b981" : (liveSensors.ehi >= 70 ? "#06b6d4" : (liveSensors.ehi >= 50 ? "#f59e0b" : "#f43f5e"))} />
-                      <stop offset="100%" stopColor={liveSensors.ehi >= 85 ? "#34d399" : (liveSensors.ehi >= 70 ? "#3b82f6" : (liveSensors.ehi >= 50 ? "#fb923c" : "#ef4444"))} />
-                    </linearGradient>
-                  </defs>
-                </svg>
-                
-                <div className="absolute flex flex-col items-center justify-center">
-                  <span className={`text-4xl font-bold font-mono tracking-tighter ${getEHIColor(liveSensors.ehi).split(' ')[0]}`}>
-                    {liveSensors.ehi}
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-semibold tracking-widest uppercase mt-0.5">Points</span>
-                </div>
-              </div>
-
-              <div className="mt-4 text-xs text-slate-400 font-mono text-center">
-                State: <span className={`font-bold ${getEHIColor(liveSensors.ehi).split(' ')[0]}`}>{activeMill?.status}</span>
-              </div>
-            </div>
-
-            {/* Core Raw Telemetry Values */}
-            <div className="md:col-span-2 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h2 className="text-lg font-bold text-white leading-tight">{activeMill?.name}</h2>
-                    <p className="text-xs text-slate-400 font-mono mt-1">{activeMill?.location} · {activeMill?.driveType}</p>
-                  </div>
-                  <Info className="w-5 h-5 text-slate-500 hover:text-slate-300 cursor-pointer transition-colors" />
-                </div>
-
-                {/* Technical Specifications */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5">
-                  <div className="bg-slate-950/50 border border-slate-800/40 p-2.5 rounded-lg">
-                    <div className="text-[10px] text-slate-500 font-medium">Grinding Capacity</div>
-                    <div className="text-sm font-bold text-slate-300 mt-0.5">{activeMill?.power}</div>
-                  </div>
-                  <div className="bg-slate-950/50 border border-slate-800/40 p-2.5 rounded-lg">
-                    <div className="text-[10px] text-slate-500 font-medium">Table Velocity</div>
-                    <div className="text-sm font-bold text-slate-300 mt-0.5">{activeMill?.tableSpeed}</div>
-                  </div>
-                  <div className="bg-slate-950/50 border border-slate-800/40 p-2.5 rounded-lg">
-                    <div className="text-[10px] text-slate-500 font-medium">Grinding Rollers</div>
-                    <div className="text-sm font-bold text-slate-300 mt-0.5">{activeMill?.rollers} Rollers</div>
-                  </div>
-                  <div className="bg-slate-950/50 border border-slate-800/40 p-2.5 rounded-lg">
-                    <div className="text-[10px] text-slate-500 font-medium">Drivetrain Solution</div>
-                    <div className="text-xs font-bold text-indigo-400 mt-0.5 truncate">{activeMill?.driveType.split(' ')[0]}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Three Raw Sensors Grid */}
-              <div className="grid grid-cols-3 gap-4 mt-5 pt-5 border-t border-slate-800/60">
-                <div>
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Vibration Velocity</div>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <span className="text-2xl font-bold font-mono text-slate-100">{liveSensors.vibration}</span>
-                    <span className="text-xs text-slate-400 font-mono">mm/s</span>
-                  </div>
-                  <div className="w-full bg-slate-800 h-1 rounded-full mt-2 overflow-hidden">
-                    <div 
-                      className={`h-full rounded-full transition-all duration-500 ${liveSensors.vibration >= 6.0 ? 'bg-rose-500' : (liveSensors.vibration >= 3.0 ? 'bg-amber-500' : 'bg-emerald-500')}`}
-                      style={{ width: `${Math.min(100, (liveSensors.vibration / 12) * 100)}%` }}
-                    ></div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Acoustic Stress</div>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <span className="text-2xl font-bold font-mono text-slate-100">{liveSensors.acoustic}</span>
-                    <span className="text-xs text-slate-400 font-mono">dB</span>
-                  </div>
-                  <div className="w-full bg-slate-800 h-1 rounded-full mt-2 overflow-hidden">
-                    <div 
-                      className={`h-full rounded-full transition-all duration-500 ${liveSensors.acoustic >= 90 ? 'bg-rose-500' : (liveSensors.acoustic >= 60 ? 'bg-amber-500' : 'bg-emerald-500')}`}
-                      style={{ width: `${Math.min(100, (liveSensors.acoustic / 150) * 100)}%` }}
-                    ></div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Bearing Temp.</div>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <span className="text-2xl font-bold font-mono text-slate-100">{liveSensors.temp}</span>
-                    <span className="text-xs text-slate-400 font-mono">°C</span>
-                  </div>
-                  <div className="w-full bg-slate-800 h-1 rounded-full mt-2 overflow-hidden">
-                    <div 
-                      className={`h-full rounded-full transition-all duration-500 ${liveSensors.temp >= 85 ? 'bg-rose-500' : (liveSensors.temp >= 70 ? 'bg-amber-500' : 'bg-emerald-500')}`}
-                      style={{ width: `${Math.min(100, (liveSensors.temp / 120) * 100)}%` }}
-                    ></div>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          {/* Graphical Telemetry Plots */}
-          <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
-            <div className="flex justify-between items-center mb-6">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-indigo-400" />
-                <h3 className="font-bold text-white text-base">Long-Term Diagnostic Trends</h3>
-              </div>
-              <span className="text-xs text-slate-500 bg-slate-950 px-2.5 py-1 rounded border border-slate-900 font-mono">
-                Past 30 Days (Continuous Log)
+          {/* Drivetrain Mechanical Map - Show visual flow */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                Mill Mechanical Train Status Map
+              </span>
+              <span className={`text-[10px] px-2 py-0.5 rounded font-mono border ${getDrivetrainStatus().bg}`}>
+                {getDrivetrainStatus().label}
               </span>
             </div>
 
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorEHI" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#aa3bff" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#aa3bff" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorAcoustic" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.15}/>
-                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <XAxis dataKey="day" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <YAxis yAxisId="left" stroke="#aa3bff" fontSize={10} domain={[0, 100]} tickLine={false} />
-                  <YAxis yAxisId="right" stroke="#ef4444" fontSize={10} orientation="right" domain={[0, 150]} tickLine={false} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#cbd5e1' }}
-                    labelStyle={{ fontWeight: 'bold', color: '#cbd5e1' }}
-                  />
-                  <Legend verticalAlign="top" height={36} iconType="circle" />
-                  <Area 
-                    yAxisId="left" 
-                    type="monotone" 
-                    dataKey={selectedMillId === 2 ? "CM1_EHI" : (selectedMillId === 1 ? "RM1_EHI" : (selectedMillId === 3 ? "Coal1_EHI" : "RM2_EHI"))} 
-                    name="Equipment Health Index (0-100)" 
-                    stroke="#aa3bff" 
-                    fillOpacity={1} 
-                    fill="url(#colorEHI)" 
-                    strokeWidth={2}
-                  />
-                  <Area 
-                    yAxisId="right" 
-                    type="monotone" 
-                    dataKey="acoustic" 
-                    name="Acoustic Emission Level (dB)" 
-                    stroke="#ef4444" 
-                    fillOpacity={1} 
-                    fill="url(#colorAcoustic)" 
-                    strokeWidth={1.5}
-                    strokeDasharray="4 4"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-            
-            <div className="flex gap-4 mt-4 text-[10px] text-slate-500 font-mono justify-center">
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500"></span> Primary health progression</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span> High-frequency micro-acoustic event rate</span>
+            {/* Graphic Layout blocks */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              
+              {/* Grinding Table */}
+              <div className={`p-3 rounded-xl border flex flex-col justify-between transition-all duration-500 ${
+                simState === 'ESTOP' 
+                  ? 'border-rose-900/40 bg-slate-950/30 text-slate-500' 
+                  : 'border-slate-850 bg-slate-900/30'
+              }`}>
+                <div>
+                  <div className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Stage 1: Processing</div>
+                  <div className="text-xs font-bold text-slate-300 mt-1">Grinding Table</div>
+                </div>
+                <div className="mt-4 flex items-center justify-between text-[11px] font-mono">
+                  <span className="text-slate-500">Speed:</span>
+                  <span className="text-slate-300">{simState === 'ESTOP' ? '0 RPM' : activeMill.tableSpeed}</span>
+                </div>
+              </div>
+
+              {/* Main Gearbox Housing */}
+              <div className={`p-3 rounded-xl border flex flex-col justify-between transition-all duration-500 ${
+                simState === 'ESTOP' 
+                  ? 'border-rose-900/40 bg-slate-950/30 text-slate-500' 
+                  : 'border-slate-850 bg-slate-900/30'
+              }`}>
+                <div>
+                  <div className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Stage 2: Transmission</div>
+                  <div className="text-xs font-bold text-slate-300 mt-1">Gearbox Shell</div>
+                </div>
+                <div className="mt-4 flex items-center justify-between text-[11px] font-mono">
+                  <span className="text-slate-500">Lubrication:</span>
+                  <span className="text-emerald-400 font-bold">OK</span>
+                </div>
+              </div>
+
+              {/* Input Shaft Bearing Zone - Primary alert location! */}
+              <div className={`p-3 rounded-xl border flex flex-col justify-between transition-all duration-500 ${
+                simState === 'ESTOP'
+                  ? 'border-rose-500 bg-rose-950/10 text-slate-400'
+                  : simState === 'FAULT'
+                    ? 'border-amber-500 bg-amber-500/5 text-slate-200 animate-pulse'
+                    : 'border-slate-850 bg-slate-900/30'
+              }`}>
+                <div>
+                  <div className="flex justify-between items-start">
+                    <div className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Stage 3: Sensor Zone</div>
+                    <Thermometer className={`w-3.5 h-3.5 ${simState === 'FAULT' ? 'text-amber-500 animate-bounce' : 'text-slate-500'}`} />
+                  </div>
+                  <div className="text-xs font-bold text-slate-300 mt-1">Input Shaft Bearing</div>
+                </div>
+                
+                {simState === 'FAULT' ? (
+                  <div className="mt-2 text-[10px] text-amber-500 font-medium leading-tight">
+                    Micro-spall detected via high-frequency AE. Vibration normal.
+                  </div>
+                ) : simState === 'ESTOP' ? (
+                  <div className="mt-2 text-[10px] text-rose-500 font-medium leading-tight">
+                    Shutdown: Emergency stop triggered.
+                  </div>
+                ) : (
+                  <div className="mt-4 flex items-center justify-between text-[11px] font-mono">
+                    <span className="text-slate-500">Bearing Temp:</span>
+                    <span className="text-slate-300">{liveSensors.temp}&deg;C</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Redundant Motors Stage */}
+              <div className={`p-3 rounded-xl border flex flex-col justify-between transition-all duration-500 ${
+                simState === 'ESTOP'
+                  ? 'border-rose-900/40 bg-slate-950/30 text-slate-500'
+                  : simState === 'MITIGATED' && activeMill.supportsCope
+                    ? 'border-cyan-500 bg-cyan-950/10 text-slate-200'
+                    : 'border-slate-850 bg-slate-900/30'
+              }`}>
+                <div>
+                  <div className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Stage 4: Propulsion</div>
+                  <div className="text-xs font-bold text-slate-300 mt-1">Drivetrain Motors</div>
+                </div>
+                
+                {simState === 'MITIGATED' && activeMill.supportsCope ? (
+                  <div className="mt-2 text-[10px] text-cyan-400 font-medium leading-tight">
+                    Active Redundancy: Motor 3 Decoupled. Operating at 85%.
+                  </div>
+                ) : (
+                  <div className="mt-4 flex items-center justify-between text-[11px] font-mono">
+                    <span className="text-slate-500">Drive Type:</span>
+                    <span className="text-indigo-400 truncate max-w-[80px]" title={activeMill.driveType}>
+                      {activeMill.driveType.split(' ')[0]}
+                    </span>
+                  </div>
+                )}
+              </div>
+
             </div>
           </div>
 
-          {/* Edge Processing status and Escalation Panel */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            {/* FPGA Hardware Co-Processor Panel */}
-            <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
-              <div className="flex items-center gap-2 mb-5">
-                <Cpu className="text-indigo-400 w-5 h-5" />
-                <h3 className="font-bold text-white text-base">Edge FPGA Diagnostic Node Status</h3>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex justify-between items-center pb-3 border-b border-slate-800/60">
-                  <span className="text-xs text-slate-400">Target FPGA System</span>
-                  <span className="text-xs font-mono font-bold text-slate-200">
-                    {activeMill?.driveType.includes("COPE") ? "Xilinx Zynq-7020 Dual-Core ARM" : "Intel MAX 10 (Lab Prototype)"}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center pb-3 border-b border-slate-800/60">
-                  <span className="text-xs text-slate-400">ADC Sampling Protocol</span>
-                  <span className="text-xs font-mono text-slate-200">500 kHz (Acoustic) / 25 kHz (Vib)</span>
-                </div>
-                <div className="flex justify-between items-center pb-3 border-b border-slate-800/60">
-                  <span className="text-xs text-slate-400">Inference Jitter & Latency</span>
-                  <span className="text-xs font-mono text-emerald-400 font-bold">28 Microseconds (Deterministic)</span>
-                </div>
-                <div className="flex justify-between items-center pb-3 border-b border-slate-800/60">
-                  <span className="text-xs text-slate-400">ML Model Compiler (hls4ml)</span>
-                  <span className="text-xs font-mono text-indigo-400 font-semibold">1-D CNN (Int8 Quantized, 85% reduction)</span>
-                </div>
-                <div className="flex justify-between items-start">
-                  <span className="text-xs text-slate-400 mt-0.5">AI Fault Classification</span>
-                  <div className="text-right">
-                    <span className={`text-xs font-bold ${liveSensors.ehi >= 85 ? 'text-emerald-400' : (liveSensors.ehi >= 70 ? 'text-cyan-400' : 'text-rose-400')}`}>
-                      {isEStopTriggered ? "System Inhibited" : (liveSensors.ehi >= 85 ? "Normal / Noise Baseline (99.8%)" : "Outer-Race Bearing Micro-Spalling (94.2%)")}
-                    </span>
-                    <div className="text-[10px] text-slate-500 mt-1 font-mono">Location: Input Shaft Bearing Housing</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* hls4ml compression badge */}
-              <div className="mt-6 bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5 flex items-start gap-3">
-                <Gauge className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="text-xs font-bold text-slate-300">FPGA vs. GPU Latency Advantage</div>
-                  <p className="text-[10px] text-slate-500 mt-1 leading-normal">
-                    FPGAs bypass the von Neumann bottleneck. Traditional edge GPUs (e.g. Jetson Nano) exhibit stochastic latency of 15ms due to operating system scheduling. The FPGA operates at the hardware layer, responding 500x faster (28μs).
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Example Maintenance Escalation Workflow */}
-            <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
-              <div className="flex justify-between items-center mb-5">
-                <div className="flex items-center gap-2">
-                  <Wrench className="text-indigo-400 w-5 h-5" />
-                  <h3 className="font-bold text-white text-base">Integrated Escalation Workflow</h3>
-                </div>
-                <span className="text-[10px] bg-indigo-950/50 text-indigo-300 border border-indigo-900/60 px-2 py-0.5 rounded font-semibold uppercase font-mono">
-                  ISO 10218 Standard
+          {/* Scrolling FPGA Telemetry Oscilloscopes - Live wave feedback */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 flex flex-col flex-1">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2">
+                <Activity className="w-4 h-4 text-indigo-400" />
+                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Edge FPGA Telemetry Oscilloscopes
                 </span>
               </div>
+              <span className="text-[10px] text-slate-500 bg-slate-950 px-2 py-0.5 rounded border border-slate-900 font-mono">
+                Real-Time Stream
+              </span>
+            </div>
 
-              {/* Phased Workflow Milestones */}
-              <div className="space-y-4 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-800">
+            {/* Telemetry charts stack */}
+            <div className="flex-1 flex flex-col gap-4">
+              
+              {/* Scope 1: Vibration Velocity (Low frequency) */}
+              <div className="flex-1 bg-slate-950/40 border border-slate-850 rounded-xl p-3 flex flex-col justify-between">
+                <div className="flex justify-between items-center text-[10px] text-slate-400 font-mono mb-2">
+                  <span className="font-bold text-cyan-400">VIBRATION VELOCITY (LOW-FREQUENCY ISO LIMIT)</span>
+                  <span>{liveSensors.vibration} mm/s (Limit: 4.5 mm/s)</span>
+                </div>
                 
-                {/* Step 1 */}
-                <div className="flex items-start gap-3.5 relative">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-mono font-bold z-10 shrink-0 ${
-                    liveSensors.ehi < 75 
-                      ? 'bg-emerald-950 border-emerald-500 text-emerald-400' 
-                      : 'bg-slate-950 border-slate-800 text-slate-500'
-                  }`}>
-                    {liveSensors.ehi < 75 ? <CheckCircle className="w-3.5 h-3.5" /> : "1"}
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-slate-200">FPGA Edge Threshold Exceeded</div>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      {liveSensors.ehi < 75 
-                        ? `Threshold breached (EHI: ${liveSensors.ehi}). Alarm register pulled High.` 
-                        : "Normal monitoring state. Threshold limit set at EHI < 75."}
-                    </p>
-                  </div>
+                <div className="h-28">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={telemetryHistory} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorVib" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <XAxis dataKey="time" hide />
+                      <YAxis stroke="#64748b" fontSize={9} tickLine={false} domain={[0, 6]} />
+                      <Area 
+                        type="monotone" 
+                        dataKey="vibration" 
+                        stroke="#06b6d4" 
+                        fillOpacity={1} 
+                        fill="url(#colorVib)" 
+                        strokeWidth={2}
+                        isAnimationActive={false}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
+              </div>
 
-                {/* Step 2 */}
-                <div className="flex items-start gap-3.5 relative">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-mono font-bold z-10 shrink-0 ${
-                    liveSensors.ehi < 75 
-                      ? 'bg-emerald-950 border-emerald-500 text-emerald-400' 
-                      : 'bg-slate-950 border-slate-800 text-slate-500'
-                  }`}>
-                    {liveSensors.ehi < 75 ? <CheckCircle className="w-3.5 h-3.5" /> : "2"}
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-slate-200">Automated SAP PM Work Order</div>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      {liveSensors.ehi < 75 
-                        ? "Work order WO-920401 triggered automatically. Criticality: High." 
-                        : "Integrates with SAP PM via MQTT publisher upon alarm trigger."}
-                    </p>
-                  </div>
+              {/* Scope 2: Acoustic Emission Stress waves (High frequency) */}
+              <div className="flex-1 bg-slate-950/40 border border-slate-850 rounded-xl p-3 flex flex-col justify-between">
+                <div className="flex justify-between items-center text-[10px] text-slate-400 font-mono mb-2">
+                  <span className="font-bold text-indigo-400">ACOUSTIC EMISSION (HIGH-FREQUENCY EDGE AI)</span>
+                  <span>{liveSensors.acoustic} dB (Limit: 85 dB)</span>
                 </div>
-
-                {/* Step 3 */}
-                <div className="flex items-start gap-3.5 relative">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-mono font-bold z-10 shrink-0 ${
-                    liveSensors.ehi < 75 && !isEStopTriggered
-                      ? 'bg-indigo-950 border-indigo-500 text-indigo-400 animate-pulse' 
-                      : 'bg-slate-950 border-slate-800 text-slate-500'
-                  }`}>
-                    {liveSensors.ehi < 75 && !isEStopTriggered ? <Clock className="w-3.5 h-3.5" /> : "3"}
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-slate-200">Field Acoustic Scanning Validation</div>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      {liveSensors.ehi < 75 && !isEStopTriggered
-                        ? "Vibration Specialist assigned: David E. (Est. dispatch: 15 mins)." 
-                        : "Field specialist dispatched to perform localized ultrasound scanning verify."}
-                    </p>
-                  </div>
+                
+                <div className="h-28">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={telemetryHistory} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorAE" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <XAxis dataKey="time" hide />
+                      <YAxis stroke="#64748b" fontSize={9} tickLine={false} domain={[0, 120]} />
+                      <Area 
+                        type="monotone" 
+                        dataKey="acoustic" 
+                        stroke="#6366f1" 
+                        fillOpacity={1} 
+                        fill="url(#colorAE)" 
+                        strokeWidth={2}
+                        isAnimationActive={false}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
-
-                {/* Step 4 */}
-                <div className="flex items-start gap-3.5 relative">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-mono font-bold z-10 shrink-0 ${
-                    isEStopTriggered 
-                      ? 'bg-rose-950 border-rose-500 text-rose-400' 
-                      : (isCopeDecoupled ? 'bg-teal-950 border-teal-500 text-teal-400' : 'bg-slate-950 border-slate-800 text-slate-500')
-                  }`}>
-                    {isEStopTriggered ? <ShieldAlert className="w-3.5 h-3.5" /> : "4"}
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-slate-200">Decoupled Operational Redundancy / Shutdown</div>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      {isEStopTriggered 
-                        ? "GPIO E-Stop pulled HIGH. Clinker production line halted to prevent shell cracking." 
-                        : (isCopeDecoupled 
-                            ? "RENK COPE module decoupled. Roller Mill operating at 85% capacity safely." 
-                            : "Mitigation action (E-Stop or COPE motor decoupling) based on criticality level.")}
-                    </p>
-                  </div>
-                </div>
-
               </div>
 
             </div>
+          </div>
 
+        </div>
+
+        {/* Right Column: Circular Gauge, Action Plan & FPGA Status */}
+        <div className="xl:col-span-1 flex flex-col gap-6">
+          
+          {/* Health Index Ring Gauge & AI Classification */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 flex flex-col items-center justify-center text-center relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none"></div>
+            
+            <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-4">
+              Equipment Health Index
+            </span>
+            
+            {/* Custom SVG Ring Progress Gauge */}
+            <div className="relative w-32 h-32 flex items-center justify-center">
+              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                {/* Track circle */}
+                <circle 
+                  cx="50" cy="50" r="42" 
+                  className="stroke-slate-800" 
+                  strokeWidth="8" fill="transparent" 
+                />
+                {/* Indicator Circle */}
+                <circle 
+                  cx="50" cy="50" r="42" 
+                  stroke={`url(#gauge-gradient-${selectedMillId}-${simState})`}
+                  strokeWidth="8" fill="transparent" 
+                  strokeDasharray={263.8}
+                  strokeDashoffset={263.8 - (263.8 * Math.min(100, liveSensors.ehi)) / 100}
+                  strokeLinecap="round"
+                  className="transition-all duration-700 ease-out"
+                />
+                <defs>
+                  <linearGradient id={`gauge-gradient-${selectedMillId}-${simState}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor={liveSensors.ehi >= 85 ? "#10b981" : (liveSensors.ehi >= 70 ? "#06b6d4" : (liveSensors.ehi >= 50 ? "#f59e0b" : "#f43f5e"))} />
+                    <stop offset="100%" stopColor={liveSensors.ehi >= 85 ? "#34d399" : (liveSensors.ehi >= 70 ? "#3b82f6" : (liveSensors.ehi >= 50 ? "#fb923c" : "#ef4444"))} />
+                  </linearGradient>
+                </defs>
+              </svg>
+              
+              <div className="absolute flex flex-col items-center justify-center">
+                <span className={`text-3xl font-bold font-mono tracking-tighter ${getEHIColor(liveSensors.ehi).split(' ')[0]}`}>
+                  {liveSensors.ehi}%
+                </span>
+                <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">Points</span>
+              </div>
+            </div>
+
+            {/* AI Diagnostics status pill */}
+            <div className="mt-4 w-full">
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">AI Classification Status</div>
+              <div className={`mt-1.5 text-xs font-bold border px-2.5 py-1.5 rounded-lg leading-tight ${getEHIColor(liveSensors.ehi)}`}>
+                {simState === 'NORMAL' && "Healthy Operation Baseline (99.8%)"}
+                {simState === 'FAULT' && "Bearing Outer-Race Micro-Spall (94.2%)"}
+                {simState === 'MITIGATED' && (activeMill.supportsCope ? "Active Redundancy: Motor Decoupled" : "Bearing Outer-Race Micro-Spall (94.2%)")}
+                {simState === 'ESTOP' && "Automatic Protective Shutoff Active"}
+              </div>
+            </div>
+          </div>
+
+          {/* Edge AI Action Recommendation & Judge's Key Takeaway */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 flex flex-col gap-4 flex-grow">
+            
+            {/* Operator Recommendation */}
+            <div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold flex items-center gap-1.5 mb-2">
+                <Info className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Edge AI Action Plan</span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed font-medium">
+                {simState === 'NORMAL' && "Normal baseline signals confirmed. Continuous monitoring active. No operator actions required."}
+                {simState === 'FAULT' && "ALERT: High-frequency stress waves indicate localized cracking in input bearing races. Vibration levels are stable. Action: Schedule maintenance check within the next 8 days."}
+                {simState === 'MITIGATED' && (activeMill.supportsCope 
+                  ? "NOTICE: Dynamic motor decoupling triggered automatically. Mill load balanced across remaining 7 motors. Schedule inspection during next routine weekly shutdown."
+                  : "ALERT: High-frequency stress waves indicate localized cracking. Drive type does not support decoupling. Action: Schedule immediate check.")}
+                {simState === 'ESTOP' && "CRITICAL HALT: Vibration exceeded safety threshold. FPGA triggered automatic E-Stop halt to prevent mechanical shearing. Inspect gearbox before restarting."}
+              </p>
+            </div>
+
+            {/* Judge's Highlight Takeaway - The core value explanation */}
+            <div className="mt-auto bg-indigo-950/20 border border-indigo-500/20 rounded-xl p-4 flex flex-col gap-2">
+              <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1">
+                <Shield className="w-3.5 h-3.5" />
+                <span>Judge's Core Takeaway</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                {simState === 'NORMAL' && "Parallel wavelet filtering removes table crushing noises locally. Rather than streaming heavy raw data to the cloud, the edge node only transmits simple EHI updates, eliminating bandwidth bottlenecks."}
+                {simState === 'FAULT' && "Observe that Vibration and Temperature are still green. Standard SCADA systems are blind to early cracks. High-frequency Acoustic Emission catches defects 8 days earlier, preventing catastrophic failures."}
+                {simState === 'MITIGATED' && "Under localized torque stress, the edge controller decouples the damaged motor module. This provides active redundancy, avoiding unplanned downtime and keeping the plant running safely."}
+                {simState === 'ESTOP' && "Industrial safety requires immediate action. Operating systems introduce milliseconds of lag. The FPGA co-processor responds in 28 microseconds, halting the system before catastrophic shearing occurs."}
+              </p>
+            </div>
+            
+          </div>
+
+          {/* FPGA Technical Metrics Card */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-3 text-slate-300 font-bold text-xs uppercase tracking-wider">
+              <Cpu className="w-4 h-4 text-indigo-400" />
+              <span>Edge Hardware Specifications</span>
+            </div>
+            
+            <div className="space-y-2 text-xs font-mono">
+              <div className="flex justify-between pb-1.5 border-b border-slate-850">
+                <span className="text-slate-500">Board Module:</span>
+                <span className="text-slate-300">{activeMill.supportsCope ? "Xilinx Zynq-7020" : "Terasic DE10-Lite"}</span>
+              </div>
+              <div className="flex justify-between pb-1.5 border-b border-slate-850">
+                <span className="text-slate-500">ADC Sampling Rate:</span>
+                <span className="text-slate-300">500,000 samples/sec</span>
+              </div>
+              <div className="flex justify-between pb-1.5 border-b border-slate-850">
+                <span className="text-slate-500">CNN Model Format:</span>
+                <span className="text-indigo-400">Int8 Quantized CNN</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Logic Resources:</span>
+                <span className="text-emerald-400">14.5% Util (Optimized)</span>
+              </div>
+            </div>
           </div>
 
         </div>
 
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-900/20 px-6 py-4 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-500 gap-2">
+      {/* Premium Footer */}
+      <footer className="border-t border-slate-900 bg-slate-900/10 px-6 py-4 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-500 gap-2">
         <div>
           ULES ARB Research Competition · Team "Arb Research Competition"
         </div>
