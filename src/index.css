@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@theme {
+  --color-dark-50: #f6f6f9;
+  --color-dark-100: #ececf3;
+  --color-dark-200: #d5d5e5;
+  --color-dark-300: #b1b1cd;
+  --color-dark-400: #8686ad;
+  --color-dark-500: #646491;
+  --color-dark-600: #4e4e75;
+  --color-dark-700: #3f3f5f;
+  --color-dark-800: #27273a;
+  --color-dark-900: #1b1b28;
+  --color-dark-950: #0f0f15;
+}
+
+@utility glass-panel {
+  background-color: rgba(15, 23, 42, 0.6);
+  border-width: 1px;
+  border-color: rgba(30, 41, 59, 0.8);
+  backdrop-filter: blur(12px);
+  border-radius: 0.75rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+}
+
+@utility glass-card {
+  background-color: rgba(15, 23, 42, 0.4);
+  border-width: 1px;
+  border-color: rgba(30, 41, 59, 0.6);
+  backdrop-filter: blur(8px);
+  border-radius: 0.5rem;
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 300ms;
+}
+
+/* Custom CSS class hover state */
+.glass-card:hover {
+  border-color: rgba(79, 70, 229, 0.6); /* border-indigo-600/60 equivalent */
+}
+
+body {
+  background-color: #020617; /* bg-slate-950 equivalent */
+  color: #f1f5f9; /* text-slate-100 equivalent */
+  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: #0f172a;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #334155;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #475569;
+}
